@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpsSystem — Dashboard</title>
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#00d4ff" />
+</head>
+<body>
+<script src="/js/config.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+const profile = requireAuth();
+if (profile) {
+  renderShell('Dashboard');
+  loadDashboard();
+}
+
+async function loadDashboard() {
+  const page = getPageContent();
+  const profile = getProfile();
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+
+  page.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:200px;"><span class="spinner" style="width:32px;height:32px;border-width:3px;"></span></div>`;
+
+  try {
+    const [tasksData, workloadData] = await Promise.all([
+      Tasks.getAll(),
+      profile.role !== 'staff' ? Tasks.getWorkload() : Promise.resolve({ workload: [] }),
+    ]);
+
+    const tasks    = tasksData.tasks || [];
+    const workload = workloadData.workload || [];
+    const active   = tasks.filter(t => ['assigned','in_progress'].includes(t.status));
+    const completed = tasks.filter(t => t.status === 'completed');
+    const today    = tasks.filter(t => t.completed_at && new Date(t.completed_at).toDateString() === new Date().toDateString());
+
+    if (profile.role === 'staff') {
+      page.innerHTML = renderStaffDashboard(profile, greeting, active, tasks);
+    } else {
+      page.innerHTML = renderManagerDashboard(profile, greeting, tasks, active, completed, today, workload);
+    }
+  } catch(e) {
+    page.innerHTML = `<div class="alert alert-error">Failed to load dashboard: ${e.message}</div>`;
+  }
+}
+
+function renderStaffDashboard(profile, greeting, active, tasks) {
+  const completed = tasks.filter(t => t.status === 'completed');
+  return `
+    <div style="margin-bottom:20px;">
+      <h2 style="font-size:20px;font-weight:700;">Good ${greeting}, <span style="color:var(--cyan)">${profile.full_name?.split(' ')[0]}</span> 👋</h2>
+      <p style="color:var(--muted);margin-top:4px;font-size:13px;">You have ${active.length} active task${active.length !== 1 ? 's' : ''}</p>
+    </div>
+
+    <div class="grid-2 mb-4">
+      <div class="stat-card bg-cyan">
+        <div class="glow" style="background:var(--cyan);"></div>
+        <div class="stat-icon bg-cyan">✅</div>
+        <div class="stat-label">Active Tasks</div>
+        <div class="stat-value c-cyan">${active.length}</div>
+      </div>
+      <div class="stat-card bg-green">
+        <div class="glow" style="background:var(--green);"></div>
+        <div class="stat-icon bg-green">🏆</div>
+        <div class="stat-label">Completed</div>
+        <div class="stat-value c-green">${completed.length}</div>
+      </div>
+    </div>
+
+    ${active.length > 0 ? `
+    <div class="card mb-4">
+      <div class="section-title">⚡ Active Tasks</div>
+      ${active.map(t => renderTaskCard(t)).join('')}
+    </div>` : `
+    <div class="card mb-4" style="text-align:center;padding:40px;">
+      <div style="font-size:40px;margin-bottom:12px;">🎉</div>
+      <div style="font-weight:600;color:var(--text);">All caught up!</div>
+      <div style="color:var(--muted);font-size:13px;margin-top:4px;">No active tasks right now.</div>
+    </div>`}
+
+    <a href="checkin.html" class="btn btn-primary w-full" style="justify-content:center;">
+      📍 GPS Check-In
+    </a>
+  `;
+}
+
+function renderManagerDashboard(profile, greeting, tasks, active, completed, today, workload) {
+  const bank     = tasks.filter(t => t.type === 'bank').length;
+  const delivery = tasks.filter(t => t.type === 'delivery').length;
+  const party    = tasks.filter(t => t.type === 'party').length;
+
+  return `
+    <div class="flex items-center justify-between mb-5" style="flex-wrap:wrap;gap:12px;">
+      <div>
+        <h2 style="font-size:20px;font-weight:700;">Good ${greeting}, <span style="color:var(--cyan)">${profile.full_name?.split(' ')[0]}</span> 👋</h2>
+        <p style="color:var(--muted);margin-top:4px;font-size:13px;">${tasks.length} total tasks across all staff</p>
+      </div>
+      <a href="tasks.html" class="btn btn-primary">➕ Assign Task</a>
+    </div>
+
+    <div class="grid-4 mb-4">
+      <div class="stat-card bg-cyan">
+        <div class="glow" style="background:var(--cyan);"></div>
+        <div class="stat-icon bg-cyan">📋</div>
+        <div class="stat-label">Total Tasks</div>
+        <div class="stat-value c-cyan">${tasks.length}</div>
+      </div>
+      <div class="stat-card bg-amber">
+        <div class="glow" style="background:var(--amber);"></div>
+        <div class="stat-icon bg-amber">⚡</div>
+        <div class="stat-label">Active</div>
+        <div class="stat-value c-amber">${active.length}</div>
+      </div>
+      <div class="stat-card bg-green">
+        <div class="glow" style="background:var(--green);"></div>
+        <div class="stat-icon bg-green">✅</div>
+        <div class="stat-label">Done Today</div>
+        <div class="stat-value c-green">${today.length}</div>
+      </div>
+      <div class="stat-card bg-purple">
+        <div class="glow" style="background:var(--purple);"></div>
+        <div class="stat-icon bg-purple">👥</div>
+        <div class="stat-label">Staff</div>
+        <div class="stat-value c-purple">${workload.length}</div>
+      </div>
+    </div>
+
+    <div class="grid-3 mb-4">
+      <div class="card" style="text-align:center;">
+        <div style="font-size:28px;margin-bottom:6px;">🏦</div>
+        <div style="font-size:24px;font-weight:700;font-family:'IBM Plex Mono';color:var(--amber);">${bank}</div>
+        <div style="font-size:11px;color:var(--muted);">Bank Deposits</div>
+      </div>
+      <div class="card" style="text-align:center;">
+        <div style="font-size:28px;margin-bottom:6px;">📦</div>
+        <div style="font-size:24px;font-weight:700;font-family:'IBM Plex Mono';color:var(--cyan);">${delivery}</div>
+        <div style="font-size:11px;color:var(--muted);">Deliveries</div>
+      </div>
+      <div class="card" style="text-align:center;">
+        <div style="font-size:28px;margin-bottom:6px;">🎉</div>
+        <div style="font-size:24px;font-weight:700;font-family:'IBM Plex Mono';color:var(--purple);">${party}</div>
+        <div style="font-size:11px;color:var(--muted);">Party Visits</div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="gap:16px;">
+      <div class="card">
+        <div class="section-title">👥 Staff Workload</div>
+        ${workload.length === 0
+          ? '<div class="empty-state"><div class="empty-icon">👤</div><p>No active assignments</p></div>'
+          : workload.sort((a,b) => b.active_count - a.active_count).map(w => `
+            <div class="workload-item">
+              <div class="flex items-center gap-2">
+                <div class="avatar" style="width:28px;height:28px;font-size:12px;">${(w.full_name||'?').charAt(0)}</div>
+                <span style="font-size:13px;font-weight:500;">${w.full_name}</span>
+              </div>
+              <span class="badge ${w.active_count === 0 ? 'badge-completed' : w.active_count <= 2 ? 'badge-assigned' : w.active_count <= 4 ? 'badge-pending' : 'badge-cancelled'}">
+                ${w.active_count} ${w.active_count === 1 ? 'task' : 'tasks'}
+              </span>
+            </div>`).join('')}
+      </div>
+
+      <div class="card">
+        <div class="flex items-center justify-between mb-3">
+          <div class="section-title" style="margin-bottom:0;">🕐 Recent Tasks</div>
+          <a href="tasks.html" style="font-size:12px;color:var(--cyan);text-decoration:none;">View all</a>
+        </div>
+        ${tasks.slice(0,5).map(t => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(30,45,71,0.5);">
+            <span style="font-size:18px;">${taskTypeIcon(t.type)}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.title}</div>
+              <div style="font-size:11px;color:var(--muted);">${t.location_name}</div>
+            </div>
+            ${statusBadge(t.status)}
+          </div>`).join('') || '<div class="empty-state"><p>No tasks yet</p></div>'}
+      </div>
+    </div>
+  `;
+}
+
+function renderTaskCard(t) {
+  return `
+    <div class="task-card mb-2" onclick="window.location.href='tasks.html'">
+      <div class="flex items-center gap-3">
+        <div class="task-type-icon bg-${taskTypeColor(t.type)}">${taskTypeIcon(t.type)}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="flex items-center gap-2" style="flex-wrap:wrap;">
+            <span style="font-size:13px;font-weight:600;">${t.title}</span>
+            ${statusBadge(t.status)}
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">📍 ${t.location_name}</div>
+        </div>
+      </div>
+    </div>`;
+}
+</script>
+</body>
+</html>

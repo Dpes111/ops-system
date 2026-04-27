@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OpsSystem — Users</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+</head>
+<body>
+<script src="/js/config.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+const profile = requireRole('admin');
+if (profile) { renderShell('User Management'); loadUsers(); }
+
+let allUsers = [];
+
+async function loadUsers() {
+  const page = getPageContent();
+  page.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:200px;"><span class="spinner" style="width:32px;height:32px;"></span></div>`;
+  try {
+    const { users } = await Users.getAll();
+    allUsers = users || [];
+    renderUsers();
+  } catch(e) {
+    page.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+function renderUsers() {
+  const page = getPageContent();
+  const admins   = allUsers.filter(u => u.role === 'admin' && u.is_active).length;
+  const managers = allUsers.filter(u => u.role === 'manager' && u.is_active).length;
+  const staff    = allUsers.filter(u => u.role === 'staff' && u.is_active).length;
+
+  page.innerHTML = `
+    <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:12px;">
+      <h2 style="font-size:18px;font-weight:700;">User Management</h2>
+      <button class="btn btn-primary" onclick="openCreateModal()">➕ Add User</button>
+    </div>
+
+    <div class="grid-3 mb-4">
+      <div class="stat-card bg-red"><div class="glow" style="background:var(--red);"></div><div class="stat-icon bg-red">🛡</div><div class="stat-label">Admins</div><div class="stat-value c-red">${admins}</div></div>
+      <div class="stat-card bg-amber"><div class="glow" style="background:var(--amber);"></div><div class="stat-icon bg-amber">⚡</div><div class="stat-label">Managers</div><div class="stat-value c-amber">${managers}</div></div>
+      <div class="stat-card bg-cyan"><div class="glow" style="background:var(--cyan);"></div><div class="stat-icon bg-cyan">👤</div><div class="stat-label">Staff</div><div class="stat-value c-cyan">${staff}</div></div>
+    </div>
+
+    <div class="card" style="overflow:hidden;padding:0;">
+      <div style="overflow-x:auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>User</th><th>Role</th><th>Phone</th><th>Status</th><th>Joined</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allUsers.map(u => `
+              <tr>
+                <td>
+                  <div class="flex items-center gap-2">
+                    <div class="avatar" style="width:30px;height:30px;font-size:12px;">${(u.full_name||'?').charAt(0)}</div>
+                    <div>
+                      <div style="font-size:13px;font-weight:500;">${u.full_name}</div>
+                      <div style="font-size:11px;color:var(--muted);">${u.email}</div>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <span class="badge" style="background:rgba(${u.role==='admin'?'239,68,68':u.role==='manager'?'245,158,11':'0,212,255'},.1);color:var(--${roleColor(u.role)});border:1px solid rgba(${u.role==='admin'?'239,68,68':u.role==='manager'?'245,158,11':'0,212,255'},.3);">
+                    ${u.role}
+                  </span>
+                </td>
+                <td style="color:var(--muted);font-size:12px;">${u.phone || '—'}</td>
+                <td>
+                  <span class="badge ${u.is_active ? 'badge-completed' : 'badge-cancelled'}">
+                    ${u.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td style="font-size:12px;color:var(--muted);font-family:'IBM Plex Mono';">${formatDate(u.created_at)}</td>
+                <td>
+                  ${u.id !== profile.id ? `
+                    <button class="btn btn-ghost btn-sm" onclick="toggleUser('${u.id}',${!u.is_active})">
+                      ${u.is_active ? '🚫 Deactivate' : '✅ Activate'}
+                    </button>` : '<span style="color:var(--muted);font-size:12px;">You</span>'}
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        ${allUsers.length === 0 ? '<div class="empty-state"><div class="empty-icon">👥</div><p>No users found</p></div>' : ''}
+      </div>
+    </div>
+
+    <!-- Create User Modal -->
+    <div class="modal-overlay" id="create-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">Create New User</span>
+          <button class="modal-close" onclick="closeCreateModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="create-error" class="alert alert-error hidden"></div>
+
+          <div class="form-group">
+            <label class="form-label">Full Name *</label>
+            <input id="c-name" class="form-input" placeholder="John Doe"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Email *</label>
+            <input id="c-email" type="email" class="form-input" placeholder="john@company.com"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Phone</label>
+            <input id="c-phone" class="form-input" placeholder="+977 98XXXXXXXX"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password *</label>
+            <input id="c-password" type="password" class="form-input" placeholder="Min. 8 characters"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Role *</label>
+            <div class="type-selector">
+              <button class="type-btn" id="role-admin" onclick="selectRole('admin')"><span class="type-icon">🛡</span>Admin</button>
+              <button class="type-btn" id="role-manager" onclick="selectRole('manager')"><span class="type-icon">⚡</span>Manager</button>
+              <button class="type-btn active-delivery" id="role-staff" onclick="selectRole('staff')"><span class="type-icon">👤</span>Staff</button>
+            </div>
+          </div>
+
+          <div class="flex gap-2 mt-4">
+            <button class="btn btn-ghost flex-1" onclick="closeCreateModal()">Cancel</button>
+            <button class="btn btn-primary flex-1" id="create-btn" onclick="createUser()">Create User</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+let selectedRole = 'staff';
+
+function selectRole(role) {
+  selectedRole = role;
+  ['admin','manager','staff'].forEach(r => {
+    const btn = document.getElementById(`role-${r}`);
+    btn.className = `type-btn${r === role ? ` active-${r === 'admin' ? 'party' : r === 'manager' ? 'bank' : 'delivery'}` : ''}`;
+  });
+}
+
+function openCreateModal() {
+  selectedRole = 'staff';
+  document.getElementById('create-modal').classList.add('open');
+  setTimeout(() => selectRole('staff'), 50);
+}
+
+function closeCreateModal() {
+  document.getElementById('create-modal').classList.remove('open');
+  ['c-name','c-email','c-phone','c-password'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('create-error')?.classList.add('hidden');
+}
+
+async function createUser() {
+  const name  = document.getElementById('c-name').value.trim();
+  const email = document.getElementById('c-email').value.trim();
+  const phone = document.getElementById('c-phone').value.trim();
+  const pass  = document.getElementById('c-password').value;
+  const errEl = document.getElementById('create-error');
+
+  if (!name || !email || !pass) { errEl.textContent = 'Name, email and password are required.'; errEl.classList.remove('hidden'); return; }
+  if (pass.length < 8) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.classList.remove('hidden'); return; }
+  errEl.classList.add('hidden');
+
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Creating…';
+
+  try {
+    await Users.create({ email, password: pass, full_name: name, role: selectedRole, phone: phone || null });
+    closeCreateModal();
+    await loadUsers();
+  } catch(e) {
+    errEl.textContent = e.message; errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.innerHTML = 'Create User';
+  }
+}
+
+async function toggleUser(id, activate) {
+  if (!confirm(`${activate ? 'Activate' : 'Deactivate'} this user?`)) return;
+  try {
+    if (activate) { await Users.update(id, { is_active: true }); }
+    else { await Users.deactivate(id); }
+    await loadUsers();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+</script>
+</body>
+</html>

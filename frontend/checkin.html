@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OpsSystem — Check-In</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+</head>
+<body>
+<script src="/js/config.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const profile = requireAuth();
+if (profile) { renderShell('GPS Check-In'); loadCheckin(); }
+
+let activeTasks = [], gps = null, mapInst = null;
+
+async function loadCheckin() {
+  const page = getPageContent();
+  page.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:200px;"><span class="spinner" style="width:32px;height:32px;"></span></div>`;
+
+  try {
+    const { tasks } = await Tasks.getAll();
+    activeTasks = (tasks || []).filter(t => ['assigned','in_progress'].includes(t.status));
+    renderCheckin();
+  } catch(e) {
+    page.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+function renderCheckin() {
+  const page = getPageContent();
+  page.innerHTML = `
+    <div style="max-width:520px;margin:0 auto;">
+
+      <div class="card mb-4">
+        <div class="flex items-center gap-3 mb-1">
+          <div style="width:40px;height:40px;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;">📍</div>
+          <div>
+            <div style="font-weight:700;">GPS Check-In</div>
+            <div style="font-size:12px;color:var(--muted);">Must be within 100m of task location to complete</div>
+          </div>
+        </div>
+      </div>
+
+      ${activeTasks.length > 0 ? `
+      <div class="card mb-4">
+        <div class="section-title">Select Task</div>
+        <div id="task-list">
+          <div class="task-option ${!selectedTask ? 'active-option' : ''}" onclick="selectTask(null)" style="padding:12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;margin-bottom:8px;${!selectedTask?'border-color:var(--cyan);background:rgba(0,212,255,.06)':''}">
+            <div style="font-size:13px;font-weight:500;color:var(--muted);">General check-in (no specific task)</div>
+          </div>
+          ${activeTasks.map(t => `
+            <div onclick="selectTask('${t.id}')" style="padding:12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;margin-bottom:8px;transition:all .15s;" id="task-opt-${t.id}">
+              <div style="font-size:13px;font-weight:600;">${taskTypeIcon(t.type)} ${t.title}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px;">📍 ${t.location_name}</div>
+            </div>`).join('')}
+        </div>
+      </div>` : `
+      <div class="card mb-4" style="text-align:center;padding:32px;">
+        <div style="font-size:32px;margin-bottom:8px;">✅</div>
+        <div style="font-weight:600;">No active tasks</div>
+        <div style="color:var(--muted);font-size:13px;margin-top:4px;">You can still do a general GPS check-in.</div>
+      </div>`}
+
+      <div class="card mb-4">
+        <div class="flex items-center justify-between mb-3">
+          <span style="font-size:14px;font-weight:600;">Your Location</span>
+          <span id="accuracy-label" style="font-size:11px;font-family:'IBM Plex Mono';color:var(--green);"></span>
+        </div>
+
+        <div id="gps-display" style="display:none;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-family:'IBM Plex Mono';font-size:12px;color:var(--cyan);margin-bottom:12px;"></div>
+
+        <div id="map-area" style="display:none;margin-bottom:12px;">
+          <div id="live-map" class="map-container"></div>
+          <div style="display:flex;gap:16px;margin-top:6px;font-size:11px;color:var(--muted);">
+            <span>🔵 You</span>
+            <span>🟡 Task location</span>
+            <span>⭕ 100m fence</span>
+          </div>
+        </div>
+
+        <div id="result-msg" style="display:none;" class="alert mb-3"></div>
+
+        <div id="gps-btn-area">
+          <button class="btn btn-primary w-full" style="justify-content:center;" onclick="getLocation()">
+            🛰 Get My Location
+          </button>
+        </div>
+
+        <div id="action-btns" style="display:none;gap:10px;flex-direction:column;">
+          <button class="btn btn-ghost w-full" style="justify-content:center;" onclick="doCheckIn()">📍 Check In</button>
+          <div id="complete-btn-area"></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+let selectedTask = null;
+
+function selectTask(id) {
+  selectedTask = id;
+  // Update UI
+  document.querySelectorAll('[id^="task-opt-"]').forEach(el => {
+    el.style.borderColor = 'var(--border)';
+    el.style.background = '';
+  });
+  if (id) {
+    const el = document.getElementById(`task-opt-${id}`);
+    if (el) { el.style.borderColor = 'var(--cyan)'; el.style.background = 'rgba(0,212,255,.06)'; }
+  }
+  // Update complete button
+  updateCompleteBtn();
+}
+
+function updateCompleteBtn() {
+  const area = document.getElementById('complete-btn-area');
+  if (!area) return;
+  if (selectedTask && gps) {
+    area.innerHTML = `<button class="btn btn-success w-full" style="justify-content:center;" onclick="doComplete()">✅ Complete Task</button>`;
+  } else {
+    area.innerHTML = '';
+  }
+}
+
+async function getLocation() {
+  const btnArea = document.getElementById('gps-btn-area');
+  btnArea.innerHTML = `<div style="text-align:center;padding:12px;"><span class="spinner"></span> <span style="color:var(--muted);font-size:13px;">Getting GPS…</span></div>`;
+
+  try {
+    const pos = await getGPS();
+    gps = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+
+    document.getElementById('accuracy-label').textContent = `±${Math.round(gps.accuracy)}m`;
+    document.getElementById('gps-display').style.display = 'block';
+    document.getElementById('gps-display').innerHTML = `LAT: ${gps.lat.toFixed(6)}<br>LNG: ${gps.lng.toFixed(6)}<br><span style="color:var(--green);">🕐 ${new Date().toLocaleTimeString()}</span>`;
+
+    // Show map
+    const task = selectedTask ? activeTasks.find(t => t.id === selectedTask) : null;
+    document.getElementById('map-area').style.display = 'block';
+    setTimeout(() => initLiveMap(gps.lat, gps.lng, task?.latitude, task?.longitude, task?.location_name), 100);
+
+    document.getElementById('gps-btn-area').style.display = 'none';
+    const actionBtns = document.getElementById('action-btns');
+    actionBtns.style.display = 'flex';
+    updateCompleteBtn();
+  } catch(e) {
+    btnArea.innerHTML = `
+      <div class="alert alert-error mb-2">Could not get location. Enable GPS and try again.</div>
+      <button class="btn btn-primary w-full" style="justify-content:center;" onclick="getLocation()">🛰 Try Again</button>`;
+  }
+}
+
+function initLiveMap(uLat, uLng, tLat, tLng, tLabel) {
+  if (mapInst) { mapInst.remove(); mapInst = null; }
+  mapInst = L.map('live-map').setView([uLat, uLng], 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(mapInst);
+
+  const userIcon = L.divIcon({ html: `<div style="width:14px;height:14px;background:#00d4ff;border:3px solid white;border-radius:50%;box-shadow:0 0 10px rgba(0,212,255,.8);"></div>`, iconSize:[14,14], iconAnchor:[7,7], className:'' });
+  L.marker([uLat, uLng], { icon: userIcon }).addTo(mapInst).bindPopup('You are here');
+
+  if (tLat && tLng) {
+    const taskIcon = L.divIcon({ html: `<div style="width:16px;height:16px;background:#f59e0b;border:3px solid white;border-radius:4px;box-shadow:0 0 10px rgba(245,158,11,.8);"></div>`, iconSize:[16,16], iconAnchor:[8,8], className:'' });
+    L.marker([tLat, tLng], { icon: taskIcon }).addTo(mapInst).bindPopup(tLabel || 'Task');
+    L.circle([tLat, tLng], { radius:100, color:'#f59e0b', fillColor:'#f59e0b', fillOpacity:.07, weight:1.5, dashArray:'6,4' }).addTo(mapInst);
+    mapInst.fitBounds([[uLat,uLng],[tLat,tLng]], { padding:[40,40] });
+  }
+}
+
+async function doCheckIn() {
+  if (!gps) return;
+  const resultEl = document.getElementById('result-msg');
+  try {
+    const res = await Attendance.checkIn({ latitude: gps.lat, longitude: gps.lng, task_id: selectedTask || undefined });
+    resultEl.className = `alert ${res.geofence.isWithin ? 'alert-success' : 'alert-warning'}`;
+    resultEl.textContent = res.message;
+    resultEl.style.display = 'block';
+  } catch(e) {
+    resultEl.className = 'alert alert-error';
+    resultEl.textContent = e.message;
+    resultEl.style.display = 'block';
+  }
+}
+
+async function doComplete() {
+  if (!gps || !selectedTask) return;
+  const resultEl = document.getElementById('result-msg');
+  try {
+    const res = await Attendance.complete({ task_id: selectedTask, latitude: gps.lat, longitude: gps.lng });
+    resultEl.className = 'alert alert-success';
+    resultEl.textContent = res.message;
+    resultEl.style.display = 'block';
+    await loadCheckin();
+  } catch(e) {
+    resultEl.className = 'alert alert-error';
+    resultEl.textContent = e.message;
+    resultEl.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>

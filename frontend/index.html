@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpsSystem — Login</title>
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#00d4ff" />
+</head>
+<body>
+<div class="login-page">
+  <!-- Background grid -->
+  <div style="position:fixed;inset:0;pointer-events:none;opacity:.03;background-image:linear-gradient(#00d4ff 1px,transparent 1px),linear-gradient(90deg,#00d4ff 1px,transparent 1px);background-size:60px 60px;"></div>
+  <!-- Glow -->
+  <div style="position:fixed;top:30%;left:50%;transform:translateX(-50%);width:400px;height:400px;background:rgba(0,212,255,.04);border-radius:50%;filter:blur(60px);pointer-events:none;"></div>
+
+  <div class="login-card" style="position:relative;">
+    <div class="login-logo">
+      <div class="login-logo-icon">⚡</div>
+      <div style="font-size:22px;font-weight:800;letter-spacing:2px;">OPS<span style="color:var(--cyan)">SYSTEM</span></div>
+      <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono';letter-spacing:2px;margin-top:4px;">STAFF & OPERATIONS MANAGER</div>
+    </div>
+
+    <div id="error-msg" class="alert alert-error hidden"></div>
+
+    <div class="form-group">
+      <label class="form-label">✉️ Email</label>
+      <input id="email" type="email" class="form-input" placeholder="you@company.com" autocomplete="email" />
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">🔒 Password</label>
+      <div style="position:relative;">
+        <input id="password" type="password" class="form-input" placeholder="••••••••" autocomplete="current-password" style="padding-right:44px;" />
+        <button onclick="togglePwd()" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;" id="eye-btn">👁</button>
+      </div>
+    </div>
+
+    <button id="login-btn" class="btn btn-primary w-full" style="justify-content:center;margin-top:8px;" onclick="handleLogin()">
+      Sign In
+    </button>
+
+    <p style="text-align:center;font-size:12px;color:var(--muted);margin-top:20px;">
+      Contact your administrator to create an account
+    </p>
+  </div>
+</div>
+
+<script src="/js/config.js"></script>
+<script src="/js/api.js"></script>
+<script>
+  // Redirect if already logged in
+  if (getToken() && getProfile()) window.location.href = '/dashboard.html';
+
+  function togglePwd() {
+    const inp = document.getElementById('password');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  }
+
+  async function handleLogin() {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const btn = document.getElementById('login-btn');
+    const errEl = document.getElementById('error-msg');
+
+    if (!email || !password) { showErr('Please enter email and password.'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Signing in…';
+    errEl.classList.add('hidden');
+
+    try {
+      const data = await signIn(email, password);
+      const token = data.access_token;
+
+      // Fetch profile from backend
+      const res = await fetch(`${window.API_URL}/auth/users`, {
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      const usersData = await res.json();
+
+      // Find current user's profile
+      const profile = (usersData.users || []).find(u => u.email === email);
+      if (!profile) throw new Error('Profile not found. Contact your administrator.');
+
+      saveSession(token, profile);
+      await registerPWA();
+      window.location.href = '/dashboard.html';
+    } catch (e) {
+      showErr(e.message);
+      btn.disabled = false;
+      btn.innerHTML = 'Sign In';
+    }
+  }
+
+  function showErr(msg) {
+    const el = document.getElementById('error-msg');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  // Enter key support
+  document.addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
+</script>
+</body>
+</html>

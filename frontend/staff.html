@@ -1,0 +1,98 @@
+<!-- staff.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OpsSystem — Staff</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+</head>
+<body>
+<script src="/js/config.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+const profile = requireRole('admin','manager');
+if (profile) { renderShell('Staff Overview'); loadStaff(); }
+
+async function loadStaff() {
+  const page = getPageContent();
+  page.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:200px;"><span class="spinner" style="width:32px;height:32px;"></span></div>`;
+  try {
+    const [ud, td, wd] = await Promise.all([Users.getAll(), Tasks.getAll(), Tasks.getWorkload()]);
+    const staff    = (ud.users||[]).filter(u => u.role==='staff' && u.is_active);
+    const tasks    = td.tasks||[];
+    const workload = wd.workload||[];
+
+    const wMap = {};
+    workload.forEach(w => { wMap[w.staff_id] = w.active_count; });
+
+    const active   = tasks.filter(t => ['assigned','in_progress'].includes(t.status)).length;
+    const done     = tasks.filter(t => t.status==='completed').length;
+    const avail    = staff.filter(s => !wMap[s.id]).length;
+
+    page.innerHTML = `
+      <div class="grid-4 mb-4">
+        <div class="stat-card bg-cyan"><div class="glow" style="background:var(--cyan);"></div><div class="stat-icon bg-cyan">👥</div><div class="stat-label">Staff</div><div class="stat-value c-cyan">${staff.length}</div></div>
+        <div class="stat-card bg-amber"><div class="glow" style="background:var(--amber);"></div><div class="stat-icon bg-amber">⚡</div><div class="stat-label">Active Tasks</div><div class="stat-value c-amber">${active}</div></div>
+        <div class="stat-card bg-green"><div class="glow" style="background:var(--green);"></div><div class="stat-icon bg-green">✅</div><div class="stat-label">Completed</div><div class="stat-value c-green">${done}</div></div>
+        <div class="stat-card" style="border:1px solid var(--border);"><div class="stat-icon" style="background:var(--card);border:1px solid var(--border);">🟢</div><div class="stat-label">Available</div><div class="stat-value c-muted">${avail}</div></div>
+      </div>
+
+      <div class="grid-3">
+        ${staff.map(s => {
+          const myTasks   = tasks.filter(t => t.assigned_to === s.id);
+          const myActive  = myTasks.filter(t => ['assigned','in_progress'].includes(t.status));
+          const myDone    = myTasks.filter(t => t.status==='completed').length;
+          const count     = wMap[s.id] || 0;
+          const countColor = count===0?'green':count<=2?'cyan':count<=4?'amber':'red';
+          return `
+          <div class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-2">
+                <div class="avatar">${s.full_name.charAt(0)}</div>
+                <div>
+                  <div style="font-size:13px;font-weight:700;">${s.full_name}</div>
+                  <div style="font-size:11px;color:var(--muted);">${s.email}</div>
+                </div>
+              </div>
+              <span class="badge badge-${count===0?'completed':count<=2?'assigned':count<=4?'pending':'cancelled'}">${count} active</span>
+            </div>
+
+            <div class="grid-3 mb-3" style="gap:8px;">
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center;">
+                <div style="font-size:18px;font-weight:700;font-family:'IBM Plex Mono';color:var(--${countColor});">${count}</div>
+                <div style="font-size:10px;color:var(--muted);">Active</div>
+              </div>
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center;">
+                <div style="font-size:18px;font-weight:700;font-family:'IBM Plex Mono';color:var(--green);">${myDone}</div>
+                <div style="font-size:10px;color:var(--muted);">Done</div>
+              </div>
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center;">
+                <div style="font-size:18px;font-weight:700;font-family:'IBM Plex Mono';">${myTasks.length}</div>
+                <div style="font-size:10px;color:var(--muted);">Total</div>
+              </div>
+            </div>
+
+            ${myActive.slice(0,3).map(t => `
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+                <span>${taskTypeIcon(t.type)}</span>
+                <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.title}</span>
+                ${statusBadge(t.status)}
+              </div>`).join('')}
+
+            <div class="flex gap-2 mt-2">
+              <a href="tasks.html" class="btn btn-ghost btn-sm flex-1" style="justify-content:center;">✅ Tasks</a>
+              <a href="chat.html" class="btn btn-ghost btn-sm flex-1" style="justify-content:center;">💬 Message</a>
+            </div>
+          </div>`;
+        }).join('') || '<div class="empty-state"><div class="empty-icon">👤</div><p>No staff members</p></div>'}
+      </div>
+    `;
+  } catch(e) {
+    page.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OpsSystem — Tasks</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+</head>
+<body>
+<script src="/js/config.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const profile = requireAuth();
+if (profile) { renderShell('Task Management'); loadTasks(); }
+
+let allTasks = [], staffList = [], filterStatus = 'all', filterType = 'all', searchQ = '';
+
+async function loadTasks() {
+  const page = getPageContent();
+  page.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:200px;"><span class="spinner" style="width:32px;height:32px;"></span></div>`;
+  try {
+    const [td, sd] = await Promise.all([
+      Tasks.getAll(),
+      (profile.role !== 'staff') ? Users.getAll() : Promise.resolve({ users: [] }),
+    ]);
+    allTasks = td.tasks || [];
+    staffList = (sd.users || []).filter(u => u.role === 'staff' && u.is_active);
+    renderPage();
+  } catch(e) {
+    page.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+  }
+}
+
+function renderPage() {
+  const canManage = profile.role !== 'staff';
+  const filtered = allTasks.filter(t => {
+    if (filterStatus !== 'all' && t.status !== filterStatus) return false;
+    if (filterType !== 'all' && t.type !== filterType) return false;
+    if (searchQ && !t.title.toLowerCase().includes(searchQ) && !t.location_name.toLowerCase().includes(searchQ)) return false;
+    return true;
+  });
+
+  const page = getPageContent();
+  page.innerHTML = `
+    <div class="flex items-center gap-3 mb-4" style="flex-wrap:wrap;">
+      <div style="position:relative;flex:1;min-width:200px;">
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);">🔍</span>
+        <input id="search-input" class="form-input" placeholder="Search tasks…" style="padding-left:36px;" oninput="searchQ=this.value.toLowerCase();renderPage();" value="${searchQ}"/>
+      </div>
+      ${canManage ? `<button class="btn btn-primary" onclick="openTaskModal()">➕ Assign Task</button>` : ''}
+    </div>
+
+    <div class="flex gap-2 mb-4" style="flex-wrap:wrap;overflow-x:auto;">
+      <div style="display:flex;gap:4px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:4px;">
+        ${['all','assigned','in_progress','completed','pending'].map(s => `
+          <button onclick="filterStatus='${s}';renderPage();" style="padding:6px 12px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:500;font-family:inherit;transition:all .15s;
+            background:${filterStatus===s?'var(--cyan)':'transparent'};color:${filterStatus===s?'#080c18':'var(--muted)'};">
+            ${s === 'all' ? 'All' : s.replace('_',' ')} <span style="opacity:.6;">${s==='all'?allTasks.length:allTasks.filter(t=>t.status===s).length}</span>
+          </button>`).join('')}
+      </div>
+      <select class="form-select" style="width:auto;padding:8px 12px;" onchange="filterType=this.value;renderPage();">
+        <option value="all">All Types</option>
+        <option value="bank" ${filterType==='bank'?'selected':''}>🏦 Bank</option>
+        <option value="delivery" ${filterType==='delivery'?'selected':''}>📦 Delivery</option>
+        <option value="party" ${filterType==='party'?'selected':''}>🎉 Party</option>
+      </select>
+    </div>
+
+    ${filtered.length === 0
+      ? `<div class="empty-state"><div class="empty-icon">📋</div><p>No tasks found</p></div>`
+      : `<div class="grid-3">
+          ${filtered.map(t => renderTaskCard(t, canManage)).join('')}
+        </div>`
+    }
+
+    <!-- Task Modal -->
+    <div class="modal-overlay" id="task-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title" id="modal-title">Assign New Task</span>
+          <button class="modal-close" onclick="closeTaskModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="modal-error" class="alert alert-error hidden"></div>
+
+          <div class="form-group">
+            <label class="form-label">Task Type</label>
+            <div class="type-selector">
+              <button class="type-btn active-bank" id="type-bank" onclick="selectType('bank')"><span class="type-icon">🏦</span>Bank Deposit</button>
+              <button class="type-btn" id="type-delivery" onclick="selectType('delivery')"><span class="type-icon">📦</span>Delivery</button>
+              <button class="type-btn" id="type-party" onclick="selectType('party')"><span class="type-icon">🎉</span>Party Visit</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Task Title *</label>
+            <input id="f-title" class="form-input" placeholder="e.g. Daily Cash Deposit"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <textarea id="f-desc" class="form-textarea" placeholder="Additional instructions…"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">📍 Location Name *</label>
+            <input id="f-location" class="form-input" placeholder="e.g. Nepal Investment Bank, Kathmandu"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Pin on Map * <span id="coords-label" style="color:var(--green);font-family:'IBM Plex Mono';"></span></label>
+            <div id="map-picker" style="height:200px;border-radius:12px;border:1px solid var(--border);overflow:hidden;"></div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Click or drag pin to set location</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Assign to Staff</label>
+            <select id="f-staff" class="form-select">
+              <option value="">— Unassigned —</option>
+              ${staffList.map(s => `<option value="${s.id}">${s.full_name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Due Date</label>
+            <input id="f-due" type="datetime-local" class="form-input"/>
+          </div>
+
+          <div class="flex gap-2 mt-4">
+            <button class="btn btn-ghost flex-1" onclick="closeTaskModal()">Cancel</button>
+            <button class="btn btn-primary flex-1" id="save-btn" onclick="saveTask()">Assign Task</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Init map after DOM is ready
+  if (canManage) setTimeout(initMapPicker, 100);
+}
+
+function renderTaskCard(t, canManage) {
+  const color = taskTypeColor(t.type);
+  return `
+    <div class="task-card">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <span style="font-size:16px;">${taskTypeIcon(t.type)}</span>
+          <span style="font-size:11px;color:var(--muted);text-transform:uppercase;font-family:'IBM Plex Mono';">${t.type}</span>
+        </div>
+        ${statusBadge(t.status)}
+      </div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">${t.title}</div>
+      ${t.description ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${t.description}</div>` : ''}
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">📍 ${t.location_name}</div>
+      ${t.assigned_to_profile ? `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
+          <div class="avatar" style="width:22px;height:22px;font-size:10px;">${(t.assigned_to_profile.full_name||'?').charAt(0)}</div>
+          <span style="font-size:12px;">${t.assigned_to_profile.full_name}</span>
+        </div>` : ''}
+      ${t.due_date ? `<div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono';">Due: ${formatDateTime(t.due_date)}</div>` : ''}
+      ${canManage ? `
+        <div class="flex gap-2 mt-2 pt-2" style="border-top:1px solid var(--border);">
+          ${t.status !== 'completed' && t.status !== 'cancelled'
+            ? `<button class="btn btn-ghost btn-sm flex-1" onclick="markComplete('${t.id}')">✅ Complete</button>` : ''}
+          <button class="btn btn-danger btn-sm" onclick="deleteTask('${t.id}')">🗑</button>
+        </div>` : ''}
+    </div>`;
+}
+
+// ── Map Picker ─────────────────────────────────────────────────
+let mapInstance = null, mapMarker = null, selLat = null, selLng = null;
+let selType = 'bank';
+
+function initMapPicker() {
+  if (mapInstance) { mapInstance.remove(); mapInstance = null; }
+  const el = document.getElementById('map-picker');
+  if (!el) return;
+  mapInstance = L.map(el).setView([27.7172, 85.3240], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(mapInstance);
+  mapInstance.on('click', e => setPin(e.latlng.lat, e.latlng.lng));
+}
+
+function setPin(lat, lng) {
+  selLat = lat; selLng = lng;
+  document.getElementById('coords-label').textContent = `(${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+  if (mapMarker) mapMarker.remove();
+  mapMarker = L.marker([lat, lng], { draggable: true }).addTo(mapInstance);
+  mapMarker.on('dragend', () => { const p = mapMarker.getLatLng(); setPin(p.lat, p.lng); });
+}
+
+function selectType(type) {
+  selType = type;
+  ['bank','delivery','party'].forEach(t => {
+    const btn = document.getElementById(`type-${t}`);
+    btn.className = `type-btn${t === type ? ` active-${t}` : ''}`;
+  });
+}
+
+function openTaskModal(task = null) {
+  document.getElementById('task-modal').classList.add('open');
+  setTimeout(initMapPicker, 200);
+}
+
+function closeTaskModal() {
+  document.getElementById('task-modal').classList.remove('open');
+  if (mapInstance) { mapInstance.remove(); mapInstance = null; }
+}
+
+async function saveTask() {
+  const title    = document.getElementById('f-title').value.trim();
+  const desc     = document.getElementById('f-desc').value.trim();
+  const location = document.getElementById('f-location').value.trim();
+  const staffId  = document.getElementById('f-staff').value;
+  const dueDate  = document.getElementById('f-due').value;
+  const errEl    = document.getElementById('modal-error');
+
+  if (!title || !location) { errEl.textContent = 'Title and location name are required.'; errEl.classList.remove('hidden'); return; }
+  if (!selLat || !selLng)  { errEl.textContent = 'Please click the map to set a location pin.'; errEl.classList.remove('hidden'); return; }
+  errEl.classList.add('hidden');
+
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…';
+
+  try {
+    await Tasks.create({ title, type: selType, description: desc, location_name: location, latitude: selLat, longitude: selLng, assigned_to: staffId || null, due_date: dueDate || null });
+    closeTaskModal();
+    await loadTasks();
+  } catch(e) {
+    errEl.textContent = e.message; errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.innerHTML = 'Assign Task';
+  }
+}
+
+async function markComplete(id) {
+  if (!confirm('Mark this task as completed?')) return;
+  await Tasks.update(id, { status: 'completed' });
+  await loadTasks();
+}
+
+async function deleteTask(id) {
+  if (!confirm('Delete this task?')) return;
+  await Tasks.delete(id);
+  await loadTasks();
+}
+</script>
+</body>
+</html>
